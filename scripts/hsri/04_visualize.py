@@ -580,7 +580,17 @@ def main():
         extra_point_data=df[tooltip_columns].fillna(""),
         tooltip_css=TOOLTIP_CSS,  # permanently hides the native hover tooltip
         on_click=ON_CLICK_JS,
-        histogram_data=pd.to_datetime(df["year"].astype("Int64").astype(str), format="%Y", errors="coerce"),
+        # "-07-01", not just the bare year: datamapplot bins this with pd.cut's
+        # default right-closed/left-open intervals, e.g. (2022-01-01, 2023-01-01].
+        # A bare-year timestamp is exactly midnight Jan 1 -- precisely a bin
+        # EDGE -- so every year's points silently landed in the PRECEDING
+        # year's bar (2023 counted as 2022, 2024 as 2023, ...), and the true
+        # final year's bar was always empty. Confirmed by reproducing pd.cut
+        # directly on the real per-year counts: bare-year timestamps gave
+        # [80, 132, 74] (+32 rescued into bin 0 by the library's own min-edge
+        # fallback, landing 112 there) instead of the correct [32, 80, 132, 74].
+        # Mid-year timestamps sit safely inside their bin, not on its edge.
+        histogram_data=pd.to_datetime(df["year"].astype("Int64").astype(str) + "-07-01", format="%Y-%m-%d", errors="coerce"),
         histogram_group_datetime_by="year",
     )
 
