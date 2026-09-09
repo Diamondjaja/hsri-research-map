@@ -333,26 +333,105 @@ BILINGUAL_UI_SCRIPT = f"""
   var SUBTITLE_EN = "HSRI RG4 Grant Close-out Reports (2022–2025)", SUBTITLE_TH = {SUB_TITLE_TH!r};
   var CLUSTER_NAMES_TH = {CLUSTER_NAMES_TH_JS};
 
-  // Cluster labels are a deck.gl TextLayer (datamap.labelLayer) driven by a
-  // per-cluster "label" field -- swap that field (keeping position/size/color,
-  // which don't change between languages) and rebuild the layer, same pattern
-  // datamap.js's own addLabels() uses internally.
-  var __labelDataEn = null, __labelDataTh = null;
+  // Cluster labels are normally a deck.gl TextLayer (WebGL-rendered glyphs).
+  // Its glyph renderer doesn't apply Thai's combining-mark shaping (tone/vowel
+  // marks need positioning relative to the preceding base consonant) regardless
+  // of font choice -- verified empirically (still broken with Noto Sans Thai,
+  // which has full correct Thai shaping data; the renderer just doesn't use it).
+  // So for Thai, labels are real HTML <div> elements overlaid on the map instead
+  // (the browser's own text engine shapes Thai correctly, as the title/subtitle
+  // already prove) positioned via datamap.onViewStateChange -- a first-party
+  // extension point datamap.js exposes for exactly this (see hexZoom/
+  // densityOverviewCrossfade for its own internal uses of the same hook).
+  var __labelDataEn = null, __labelDataTh = null, __overlayEl = null;
+
+  function hsriBuildLabelData() {{
+    if (__labelDataEn) return;
+    __labelDataEn = datamap.labelLayer.props.data;
+    __labelDataTh = __labelDataEn.map(function (d) {{
+      var enKey = d.label.replace(/\\n/g, ' ');
+      var thLabel = CLUSTER_NAMES_TH[enKey];
+      return thLabel ? Object.assign({{}}, d, {{label: thLabel}}) : d;
+    }});
+  }}
+
+  function hsriEnsureOverlay() {{
+    if (__overlayEl) return;
+    __overlayEl = document.createElement('div');
+    __overlayEl.id = 'hsri-th-label-overlay';
+    __overlayEl.style.cssText = 'position:fixed; top:0; left:0; width:100%; height:100%; pointer-events:none; z-index:2; overflow:hidden;';
+    document.body.appendChild(__overlayEl);
+    __labelDataTh.forEach(function (d) {{
+      var div = document.createElement('div');
+      div.style.cssText = 'position:absolute; transform:translate(-50%,-50%); font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif; font-weight:900; text-align:center; white-space:pre-line; pointer-events:none; text-shadow:-1px -1px 0 #eee,1px -1px 0 #eee,-1px 1px 0 #eee,1px 1px 0 #eee;';
+      div.style.color = 'rgb(' + d.r + ',' + d.g + ',' + d.b + ')';
+      div.textContent = d.label;
+      __overlayEl.appendChild(div);
+    }});
+  }}
+
+  function hsriUpdateOverlayPositions() {{
+    if (!__overlayEl || __overlayEl.style.display === 'none') return;
+    var vp = datamap.deckgl.getViewports()[0];
+    if (!vp) return;
+    var divs = __overlayEl.children;
+
+    // The WebGL TextLayer (English) hides overlapping lower-priority labels via
+    // deck.gl's CollisionFilterExtension; this plain HTML overlay has no such
+    // system, so without this all 12 labels show at once regardless of zoom,
+    // reading as "way too big" even though each one individually isn't. Greedy
+    // largest-first placement with a rough bounding-box overlap check
+    // approximates the same declutter effect.
+    var placed = [];
+    var order = __labelDataTh.map(function (d, i) {{ return i; }}).sort(function (a, b) {{
+      return __labelDataTh[b].size - __labelDataTh[a].size;
+    }});
+
+    order.forEach(function (i) {{
+      var d = __labelDataTh[i];
+      var div = divs[i];
+      var screen = vp.project([d.x, d.y]);
+      var fontSize = Math.max(9, Math.min(15, d.size * 0.5));
+      var lines = d.label.split('\\n');
+      var w = Math.max.apply(null, lines.map(function (l) {{ return l.length; }})) * fontSize * 0.9;
+      var h = lines.length * fontSize * 1.1;
+      var box = {{
+        left: screen[0] - w / 2, right: screen[0] + w / 2,
+        top: screen[1] - h / 2, bottom: screen[1] + h / 2,
+      }};
+      var overlaps = placed.some(function (p) {{
+        return box.left < p.right && box.right > p.left && box.top < p.bottom && box.bottom > p.top;
+      }});
+      if (overlaps) {{
+        div.style.display = 'none';
+        return;
+      }}
+      placed.push(box);
+      div.style.display = 'block';
+      div.style.left = screen[0] + 'px';
+      div.style.top = screen[1] + 'px';
+      div.style.fontSize = fontSize + 'px';
+    }});
+  }}
+
   window.hsriSwapLabels = function (isTh) {{
     if (typeof datamap === 'undefined' || !datamap.labelLayer) return;
-    if (!__labelDataEn) {{
-      __labelDataEn = datamap.labelLayer.props.data;
-      __labelDataTh = __labelDataEn.map(function (d) {{
-        var enKey = d.label.replace(/\\n/g, ' ');
-        var thLabel = CLUSTER_NAMES_TH[enKey];
-        return thLabel ? Object.assign({{}}, d, {{label: thLabel}}) : d;
-      }});
-    }}
-    var newData = isTh ? __labelDataTh : __labelDataEn;
-    var newLayer = new deck.TextLayer(Object.assign({{}}, datamap.labelLayer.props, {{data: newData}}));
-    datamap.labelLayer = newLayer;
-    datamap.layers = datamap.layers.map(function (l) {{ return l.id === 'labelLayer' ? newLayer : l; }});
+    hsriBuildLabelData();
+
+    // English: real (working) WebGL TextLayer, HTML overlay hidden.
+    var enLayer = new deck.TextLayer(Object.assign({{}}, datamap.labelLayer.props, {{data: isTh ? [] : __labelDataEn}}));
+    datamap.labelLayer = enLayer;
+    datamap.layers = datamap.layers.map(function (l) {{ return l.id === 'labelLayer' ? enLayer : l; }});
     datamap.deckgl.setProps({{layers: datamap.layers.slice()}});
+
+    if (isTh) {{
+      hsriEnsureOverlay();
+      __overlayEl.style.display = 'block';
+      hsriUpdateOverlayPositions();
+      datamap.onViewStateChange('hsriLabelOverlay', hsriUpdateOverlayPositions);
+    }} else if (__overlayEl) {{
+      __overlayEl.style.display = 'none';
+    }}
   }};
 
   window.hsriApplyLang = function () {{
