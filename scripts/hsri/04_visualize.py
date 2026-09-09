@@ -13,6 +13,7 @@ Input:  data/hsri/hsri_clustered_named.pkl (from step 3)
 Output: hsri_research_map.html (repo root; copy over index.html to deploy)
 """
 import json
+import textwrap
 from pathlib import Path
 
 import matplotlib
@@ -277,6 +278,27 @@ def inline_vendor_scripts(filename):
 TITLE_TH = "แผนที่ทุนวิจัย สวรส."
 SUB_TITLE_TH = "รายงานปิดโครงการทุน วช. RG4 (2565–2568)"
 
+CLUSTER_NAMES_TH_FILE = ROOT / "data" / "hsri" / "hsri_cluster_names_th.json"
+
+
+def build_cluster_names_th_js():
+    """Loads the 12 cluster-name translations (06_translate_clusters.py), line-wraps
+    them (Thai has no spaces to wrap on, so this is an approximate fixed-width wrap,
+    not word-aware -- fine for 12 short labels), and returns a JS object literal
+    string mapping the unwrapped English name -> wrapped Thai name. Empty object (no
+    label-language-switching, just tooltip content) if the translation file is
+    missing."""
+    if not CLUSTER_NAMES_TH_FILE.exists():
+        print("  ! cluster name translations not found, labels will stay English-only")
+        return "{}"
+    with open(CLUSTER_NAMES_TH_FILE, "r", encoding="utf-8") as f:
+        mapping = json.load(f)
+    wrapped = {en: "\n".join(textwrap.wrap(th, width=16, break_long_words=True)) for en, th in mapping.items()}
+    return json.dumps(wrapped, ensure_ascii=False)
+
+
+CLUSTER_NAMES_TH_JS = build_cluster_names_th_js()
+
 BILINGUAL_UI_SCRIPT = f"""
 <div id="custom-tooltip-root" style="display:none;"></div>
 <div id="lang-toggle-container" style="
@@ -309,6 +331,29 @@ BILINGUAL_UI_SCRIPT = f"""
 
   var TITLE_EN = "HSRI Research Grant Map", TITLE_TH = {TITLE_TH!r};
   var SUBTITLE_EN = "HSRI RG4 Grant Close-out Reports (2022–2025)", SUBTITLE_TH = {SUB_TITLE_TH!r};
+  var CLUSTER_NAMES_TH = {CLUSTER_NAMES_TH_JS};
+
+  // Cluster labels are a deck.gl TextLayer (datamap.labelLayer) driven by a
+  // per-cluster "label" field -- swap that field (keeping position/size/color,
+  // which don't change between languages) and rebuild the layer, same pattern
+  // datamap.js's own addLabels() uses internally.
+  var __labelDataEn = null, __labelDataTh = null;
+  window.hsriSwapLabels = function (isTh) {{
+    if (typeof datamap === 'undefined' || !datamap.labelLayer) return;
+    if (!__labelDataEn) {{
+      __labelDataEn = datamap.labelLayer.props.data;
+      __labelDataTh = __labelDataEn.map(function (d) {{
+        var enKey = d.label.replace(/\\n/g, ' ');
+        var thLabel = CLUSTER_NAMES_TH[enKey];
+        return thLabel ? Object.assign({{}}, d, {{label: thLabel}}) : d;
+      }});
+    }}
+    var newData = isTh ? __labelDataTh : __labelDataEn;
+    var newLayer = new deck.TextLayer(Object.assign({{}}, datamap.labelLayer.props, {{data: newData}}));
+    datamap.labelLayer = newLayer;
+    datamap.layers = datamap.layers.map(function (l) {{ return l.id === 'labelLayer' ? newLayer : l; }});
+    datamap.deckgl.setProps({{layers: datamap.layers.slice()}});
+  }};
 
   window.hsriApplyLang = function () {{
     var isTh = window.__hsriLang === 'th';
@@ -325,6 +370,8 @@ BILINGUAL_UI_SCRIPT = f"""
     if (root && root.style.display !== 'none' && root.dataset.en) {{
       root.innerHTML = isTh ? root.dataset.th : root.dataset.en;
     }}
+
+    window.hsriSwapLabels(isTh);
   }};
 
   window.hsriToggleLang = function () {{
