@@ -4,7 +4,7 @@ An interactive visualization exploring the research landscape funded by the Heal
 Research Institute (HSRI / สวรส.) of Thailand, built from RG4 grant close-out reports
 covering fiscal years 2022–2025.
 
-[🗺️ Explore the visualization](https://biodatlab.github.io/murex-map) (recommended using Google Chrome on desktop)
+[🗺️ Explore the visualization](https://diamondjaja.github.io/hsri-research-map) (recommended using Google Chrome on desktop)
 
 <img src="assets/map_screenshot.png" alt="HSRI Research Grant Map" width="800">
 
