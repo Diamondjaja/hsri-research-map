@@ -231,7 +231,14 @@ ON_CLICK_JS = (
     "__root.dataset.en = __en;\n"
     "__root.dataset.th = __th;\n"
     "__root.innerHTML = (window.__hsriLang === 'th') ? __th : __en;\n"
-    "__root.style.display = 'block';"
+    "__root.style.display = 'block';\n"
+    # datamapplot wraps this whole snippet as `({index, picked, layer}, event)
+    # => { if (picked) { ...this... } }` (see prepare_hover_data in
+    # datamapplot's interactive_helpers.py), so `index` is in scope here.
+    # Recorded so the hover wiring below can tell "is this the same point
+    # that's already shown" without needing to intercept datamap's own
+    # onClick at all -- see the note in BILINGUAL_UI_SCRIPT for why.
+    "__root.dataset.shownIndex = String(index);"
 )
 
 
@@ -397,12 +404,37 @@ BILINGUAL_UI_SCRIPT = f"""
 
         var picked = info && info.picked;
         var index = picked ? info.index : -1;
-        if (index === __hoverIndex) return;
-        __hoverIndex = index;
 
         if (picked) {{
+          // Click (deck's native onClick, wired independently of this
+          // handler -- see the top of this function's containing block, and
+          // deliberately left untouched here rather than re-wrapped: the
+          // getTooltip prop turned out not to be reliably re-assignable via
+          // setProps in this exact bundle, so onClick -- the one path that's
+          // survived every regression this session -- isn't a place to take
+          // that same risk) opens the SAME box but interactive (its
+          // template's own inline style sets pointer-events:auto). If the
+          // cursor is still resting on that point -- likely, since they just
+          // clicked it -- this handler fires again right after with the
+          // same index. __hoverIndex alone can't detect that: it's private
+          // to this closure and click doesn't update it. So read which
+          // index is ACTUALLY shown from the DOM instead (dataset.shownIndex,
+          // set by ON_CLICK_JS itself on every render, click or hover) and
+          // leave it alone when it matches and is still interactive.
+          // Without this, hover would immediately downgrade the just-opened
+          // interactive box back to click-through, breaking the close
+          // button and pane scrolling a frame after the click.
+          var root = document.getElementById('custom-tooltip-root');
+          var box = document.querySelector('#custom-tooltip-root > *');
+          var shownIndex = root.dataset.shownIndex;
+          var isShowingThis = root.style.display !== 'none' && shownIndex === String(index);
+          var clickPinned = isShowingThis && box && box.style.pointerEvents !== 'none';
+          if (clickPinned) {{ __hoverIndex = index; return; }}
+          if (isShowingThis && index === __hoverIndex) return; // already previewing this exact point via hover
+
+          __hoverIndex = index;
           // A pending hide (from having *just* wobbled off a point) is
-          // cancelled by any new pick -- see the hide branch below for why.
+          // cancelled by any new pick.
           if (__hideTimer) {{ clearTimeout(__hideTimer); __hideTimer = null; }}
           onClickFn(info);
           // The tooltip box is centered and can be exactly where the cursor
@@ -420,11 +452,13 @@ BILINGUAL_UI_SCRIPT = f"""
           // seeing every real pointer move straight through the tooltip, so
           // it keeps reporting picked:true for as long as the cursor
           // actually rests on the point, with nothing to debounce around.
-          // Click/tap leaves the box interactive (its own inline style sets
-          // pointer-events:auto already) for the close button and scrolling.
-          var box = document.querySelector('#custom-tooltip-root > *');
+          // Re-query -- onClickFn just replaced the box via innerHTML, so
+          // the reference read above is already stale.
+          box = document.querySelector('#custom-tooltip-root > *');
           if (box) box.style.pointerEvents = 'none';
         }} else {{
+          if (index === __hoverIndex) return;
+          __hoverIndex = index;
           // Still debounced (not instant): protects against genuine
           // pick-radius edge jitter, separate from the self-covering issue
           // above. Any re-pick within the window cancels it (see above).
