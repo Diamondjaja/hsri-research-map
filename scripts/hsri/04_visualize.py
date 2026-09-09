@@ -4,9 +4,10 @@ Step 4 (HSRI adaptation of 04_Datamapplot_Visualization.ipynb)
 
 Builds the interactive research map from the clustered/named HSRI projects.
 Single clustering layer (see step 3 notes on why the original 5-layer
-hierarchy isn't reproduced). Tooltip rebuilt around HSRI fields (PI,
-institution, budget, research design, policy/academic/social/economic
-dimensions) instead of the original paper fields (authors/journal/DOI).
+hierarchy isn't reproduced). Tooltip rebuilt around HSRI fields (PI, research
+design, policy/academic/social/economic impact dimensions) instead of the
+original paper fields (authors/journal/DOI). Deliberately excludes grant
+budget amounts and implementation obstacles/challenges.
 
 Input:  data/hsri/hsri_clustered_named.pkl (from step 3)
 Output: hsri_research_map.html (repo root; copy over index.html to deploy)
@@ -34,6 +35,19 @@ def format_tags_as_html(tags, color):
         for t in tags
     )
     return f'<div style="display:flex;flex-wrap:wrap;gap:5px;">{items}</div>'
+
+
+def format_yn_dims(row):
+    dims = []
+    for key, label in [
+        ("policy_dimension_yn", "Policy"),
+        ("academic_dimension_yn", "Academic"),
+        ("social_dimension_yn", "Social"),
+        ("economic_dimension_yn", "Economic"),
+    ]:
+        if str(row.get(key, "")).strip().lower() == "yes":
+            dims.append(label)
+    return ", ".join(dims) if dims else "Not reported"
 
 
 TOOLTIP_CSS = """
@@ -72,7 +86,7 @@ TOOLTIP_TEMPLATE = """
         </h2>
 
         <div style="font-size: 11px; color: #64748b; font-weight: 600; margin-bottom: 6px;">
-            Year: {year}
+            PI: {pi_name} | Year: {year}
         </div>
 
         <div style="display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 6px;">
@@ -121,9 +135,14 @@ TOOLTIP_TEMPLATE = """
             {techniques_html}
         </div>
 
-        <div>
+        <div style="margin-bottom: 16px;">
             <div style="font-size: 12px; font-weight: 700; color: #d6ac4b; margin-bottom: 5px;">Key Concepts</div>
             {concepts_html}
+        </div>
+
+        <div>
+            <div style="font-size: 12px; font-weight: 700; color: #2a5982; margin-bottom: 5px;">Impact Dimensions</div>
+            <p style="margin: 0; font-size: 12.5px; line-height: 1.45; color: #0f172a;">{impact_dims}</p>
         </div>
     </div>
 </div>
@@ -205,14 +224,16 @@ def main():
 
     df["techniques_html"] = df["techniques_tools"].apply(lambda x: format_tags_as_html(x, "#2a5982"))
     df["concepts_html"] = df["key_concepts"].apply(lambda x: format_tags_as_html(x, "#d6ac4b"))
+    df["impact_dims"] = df.apply(format_yn_dims, axis=1)
     df["hover_title"] = df["title_en"].fillna(df["project_title_th"]).fillna("Untitled project")
 
-    # Tooltip is scoped to project details + findings only -- no PI name, budget, or
-    # grant-reporting fields (policy/academic/social/economic impact dimensions).
+    # PI name and impact dimensions are allowed; grant budget and implementation
+    # obstacles/challenges are not -- neither is shown here, and no budget/challenge
+    # content leaks through the summary/findings text (verified separately).
     tooltip_columns = [
-        "year", "domain", "data_type",
+        "pi_name", "year", "domain", "data_type",
         "summary_short", "summary_simple", "main_findings", "methodology",
-        "techniques_html", "concepts_html",
+        "techniques_html", "concepts_html", "impact_dims",
     ]
 
     print("Creating interactive research map...")
