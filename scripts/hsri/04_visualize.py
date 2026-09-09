@@ -405,37 +405,33 @@ BILINGUAL_UI_SCRIPT = f"""
           // cancelled by any new pick -- see the hide branch below for why.
           if (__hideTimer) {{ clearTimeout(__hideTimer); __hideTimer = null; }}
           onClickFn(info);
+          // The tooltip box is centered and can be exactly where the cursor
+          // already is for any point near mid-screen -- the instant it
+          // renders, IT becomes the topmost element under the pointer, so
+          // the canvas would stop receiving that cursor's events entirely
+          // (confirmed by testing: elementFromPoint at a shown point's own
+          // screen coords resolved to the tooltip div, not the canvas; a
+          // mouseenter/mouseleave keep-alive on the tooltip was tried first
+          // but depends on the browser firing a *move* event right as the
+          // box appears under an already-stationary cursor, which it does
+          // not reliably do -- so points "around the textbox" kept failing).
+          // Making the rendered box click-through for the HOVER path only
+          // removes the problem instead of chasing it: the canvas keeps
+          // seeing every real pointer move straight through the tooltip, so
+          // it keeps reporting picked:true for as long as the cursor
+          // actually rests on the point, with nothing to debounce around.
+          // Click/tap leaves the box interactive (its own inline style sets
+          // pointer-events:auto already) for the close button and scrolling.
+          var box = document.querySelector('#custom-tooltip-root > *');
+          if (box) box.style.pointerEvents = 'none';
         }} else {{
-          // Debounced, not immediate: the tooltip box is centered and can
-          // sit directly under the cursor for any point near mid-screen --
-          // the instant it renders, IT (not the canvas) is the topmost
-          // element under the pointer, so deck sees the canvas's pointerout
-          // and reports picked:false one frame later (confirmed by testing:
-          // elementFromPoint at a shown point's own screen coords resolved
-          // to the tooltip div, not the canvas). Without this delay that
-          // reads as "pops up and instantly disappears" for every point near
-          // center. Any re-pick within the window (see above) cancels it.
+          // Still debounced (not instant): protects against genuine
+          // pick-radius edge jitter, separate from the self-covering issue
+          // above. Any re-pick within the window cancels it (see above).
           hsriScheduleHide();
         }}
       }},
     }});
-
-    // The debounce above buys enough time to move the cursor onto the
-    // tooltip itself, but staying there needs its own keep-alive -- the
-    // canvas remains "unpicked" for as long as the tooltip covers it, so
-    // hovering the tooltip's own content (to read/scroll it) must not let
-    // the 150ms elapse. Bound to the tooltip div only, never the canvas, so
-    // this can't touch mjolnir's pan/zoom gesture recognition.
-    var tooltipRoot = document.getElementById('custom-tooltip-root');
-    if (tooltipRoot) {{
-      tooltipRoot.addEventListener('mouseenter', function () {{
-        if (__hideTimer) {{ clearTimeout(__hideTimer); __hideTimer = null; }}
-      }});
-      tooltipRoot.addEventListener('mouseleave', function () {{
-        if (__isTouch) return;
-        hsriScheduleHide();
-      }});
-    }}
     return true;
   }}
 
