@@ -220,6 +220,50 @@ def optimize_for_touch_devices(filename):
         print(f"Applied {changes}/{len(modifications)} touch optimizations")
 
 
+TOUCH_RACE_GUARD_SCRIPT = """
+<script>
+// The touch-optimization patch above remaps our app's own click/mousemove/mouseleave
+// bindings for tap-to-show / double-tap-to-hide. But deck.gl's own internal event
+// manager (mjolnir.js) ALSO natively listens for real mousemove/mouseout on the canvas,
+// independent of our app-level bindings, to drive its built-in hover/tooltip picking.
+// iOS synthesizes mousemove/mouseout events around a touch tap for compatibility, and
+// those reach deck.gl's native handler and immediately re-hide the tooltip our tap just
+// showed ("click and disappeared"). Suppress that synthetic event storm during the tap
+// window so it never reaches deck.gl's internal handler -- 'click' and 'dblclick'
+// (which our own show/hide logic depends on) are untouched.
+(function () {
+  function armGuard() {
+    var canvas = document.querySelector('#deck-container canvas');
+    if (!canvas) { setTimeout(armGuard, 200); return; }
+    var suppressUntil = 0;
+    var GUARD_MS = 600;
+    var arm = function () { suppressUntil = performance.now() + GUARD_MS; };
+    canvas.addEventListener('pointerdown', arm, true);
+    canvas.addEventListener('touchstart', arm, true);
+    ['mousemove', 'mouseout', 'mouseover', 'pointermove', 'pointerout'].forEach(function (type) {
+      canvas.addEventListener(type, function (e) {
+        if (performance.now() < suppressUntil) { e.stopImmediatePropagation(); }
+      }, true);
+    });
+  }
+  armGuard();
+})();
+</script>
+"""
+
+
+def guard_touch_tooltip_race(filename):
+    with open(filename, "r", encoding="utf-8") as f:
+        content = f.read()
+    if "</body>" not in content:
+        print("  ! </body> not found, could not inject touch-race guard script")
+        return
+    content = content.replace("</body>", TOUCH_RACE_GUARD_SCRIPT + "</body>")
+    with open(filename, "w", encoding="utf-8") as f:
+        f.write(content)
+    print("Injected touch-tooltip-race guard script")
+
+
 def main():
     df = pd.read_pickle(IN_FILE)
     print(f"Loaded {len(df)} projects")
@@ -273,6 +317,7 @@ def main():
 
     inline_vendor_scripts(str(OUT_FILE))
     optimize_for_touch_devices(str(OUT_FILE))
+    guard_touch_tooltip_race(str(OUT_FILE))
 
 
 if __name__ == "__main__":
