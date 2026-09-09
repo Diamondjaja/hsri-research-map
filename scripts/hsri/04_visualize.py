@@ -228,9 +228,13 @@ TOUCH_RACE_GUARD_SCRIPT = """
 // independent of our app-level bindings, to drive its built-in hover/tooltip picking.
 // iOS synthesizes mousemove/mouseout events around a touch tap for compatibility, and
 // those reach deck.gl's native handler and immediately re-hide the tooltip our tap just
-// showed ("click and disappeared"). Suppress that synthetic event storm during the tap
-// window so it never reaches deck.gl's internal handler -- 'click' and 'dblclick'
-// (which our own show/hide logic depends on) are untouched.
+// showed ("click and disappeared"). Suppress ONLY those two synthetic MOUSE event types
+// during the tap window -- real touch panning/zooming is driven by touch/pointer events,
+// never by mouse events, so this doesn't affect it. (An earlier version of this guard
+// also suppressed pointermove/pointerout, which broke drag-to-pan and deck.gl's own
+// tap-vs-drag gesture recognition entirely -- narrowed to just the two mouse events that
+// are actually involved in the race.) 'click' and 'dblclick' (which our own show/hide
+// logic depends on) are untouched either way.
 (function () {
   function armGuard() {
     var canvas = document.querySelector('#deck-container canvas');
@@ -240,7 +244,7 @@ TOUCH_RACE_GUARD_SCRIPT = """
     var arm = function () { suppressUntil = performance.now() + GUARD_MS; };
     canvas.addEventListener('pointerdown', arm, true);
     canvas.addEventListener('touchstart', arm, true);
-    ['mousemove', 'mouseout', 'mouseover', 'pointermove', 'pointerout'].forEach(function (type) {
+    ['mousemove', 'mouseout'].forEach(function (type) {
       canvas.addEventListener(type, function (e) {
         if (performance.now() < suppressUntil) { e.stopImmediatePropagation(); }
       }, true);
