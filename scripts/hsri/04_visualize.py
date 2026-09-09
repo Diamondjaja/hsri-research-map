@@ -63,20 +63,21 @@ TOOLTIP_CSS = """
 TOOLTIP_TEMPLATE = """
 <div style="
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
-    width: 750px;
+    width: min(750px, 92vw);
+    max-height: min(80vh, 600px);
     background: #fff;
     border: 1px solid #e5e7eb;
     border-radius: 10px;
     box-shadow: 0 8px 24px rgba(0,0,0,0.12);
-    overflow: hidden;
     color: #0f172a;
     text-align: left;
-    position: relative;
+    display: flex;
+    align-items: stretch;
+    pointer-events: auto;
 ">
     <div style="
-        position: absolute;
-        top: 0; left: 0; bottom: 0;
         width: 58%;
+        flex-shrink: 0;
         padding: 20px;
         overflow-y: auto;
         box-sizing: border-box;
@@ -107,13 +108,13 @@ TOOLTIP_TEMPLATE = """
     </div>
 
     <div style="
-        margin-left: 58%;
         width: 42%;
+        flex-shrink: 0;
         padding: 20px;
+        overflow-y: auto;
         background-color: #f8fafc;
         border-left: 1px solid #e2e8f0;
         box-sizing: border-box;
-        height: fit-content;
     ">
         <div style="margin-bottom: 16px;">
             <div style="font-size: 12px; font-weight: 700; color: #2a5982; margin-bottom: 6px;">Simple Explanation</div>
