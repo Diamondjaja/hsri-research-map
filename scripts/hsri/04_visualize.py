@@ -13,7 +13,6 @@ Input:  data/hsri/hsri_clustered_named.pkl (from step 3)
 Output: hsri_research_map.html (repo root; copy over index.html to deploy)
 """
 import json
-import textwrap
 from pathlib import Path
 
 import matplotlib
@@ -278,27 +277,6 @@ def inline_vendor_scripts(filename):
 TITLE_TH = "แผนที่ทุนวิจัย สวรส."
 SUB_TITLE_TH = "รายงานปิดโครงการทุน วช. RG4 (2565–2568)"
 
-CLUSTER_NAMES_TH_FILE = ROOT / "data" / "hsri" / "hsri_cluster_names_th.json"
-
-
-def build_cluster_names_th_js():
-    """Loads the 12 cluster-name translations (06_translate_clusters.py), line-wraps
-    them (Thai has no spaces to wrap on, so this is an approximate fixed-width wrap,
-    not word-aware -- fine for 12 short labels), and returns a JS object literal
-    string mapping the unwrapped English name -> wrapped Thai name. Empty object (no
-    label-language-switching, just tooltip content) if the translation file is
-    missing."""
-    if not CLUSTER_NAMES_TH_FILE.exists():
-        print("  ! cluster name translations not found, labels will stay English-only")
-        return "{}"
-    with open(CLUSTER_NAMES_TH_FILE, "r", encoding="utf-8") as f:
-        mapping = json.load(f)
-    wrapped = {en: "\n".join(textwrap.wrap(th, width=16, break_long_words=True)) for en, th in mapping.items()}
-    return json.dumps(wrapped, ensure_ascii=False)
-
-
-CLUSTER_NAMES_TH_JS = build_cluster_names_th_js()
-
 BILINGUAL_UI_SCRIPT = f"""
 <div id="custom-tooltip-root" style="display:none;"></div>
 <div id="lang-toggle-container" style="
@@ -331,108 +309,12 @@ BILINGUAL_UI_SCRIPT = f"""
 
   var TITLE_EN = "HSRI Research Grant Map", TITLE_TH = {TITLE_TH!r};
   var SUBTITLE_EN = "HSRI RG4 Grant Close-out Reports (2022–2025)", SUBTITLE_TH = {SUB_TITLE_TH!r};
-  var CLUSTER_NAMES_TH = {CLUSTER_NAMES_TH_JS};
 
-  // Cluster labels are normally a deck.gl TextLayer (WebGL-rendered glyphs).
-  // Its glyph renderer doesn't apply Thai's combining-mark shaping (tone/vowel
-  // marks need positioning relative to the preceding base consonant) regardless
-  // of font choice -- verified empirically (still broken with Noto Sans Thai,
-  // which has full correct Thai shaping data; the renderer just doesn't use it).
-  // So for Thai, labels are real HTML <div> elements overlaid on the map instead
-  // (the browser's own text engine shapes Thai correctly, as the title/subtitle
-  // already prove) positioned via datamap.onViewStateChange -- a first-party
-  // extension point datamap.js exposes for exactly this (see hexZoom/
-  // densityOverviewCrossfade for its own internal uses of the same hook).
-  var __labelDataEn = null, __labelDataTh = null, __overlayEl = null;
-
-  function hsriBuildLabelData() {{
-    if (__labelDataEn) return;
-    __labelDataEn = datamap.labelLayer.props.data;
-    __labelDataTh = __labelDataEn.map(function (d) {{
-      var enKey = d.label.replace(/\\n/g, ' ');
-      var thLabel = CLUSTER_NAMES_TH[enKey];
-      return thLabel ? Object.assign({{}}, d, {{label: thLabel}}) : d;
-    }});
-  }}
-
-  function hsriEnsureOverlay() {{
-    if (__overlayEl) return;
-    __overlayEl = document.createElement('div');
-    __overlayEl.id = 'hsri-th-label-overlay';
-    __overlayEl.style.cssText = 'position:fixed; top:0; left:0; width:100%; height:100%; pointer-events:none; z-index:2; overflow:hidden;';
-    document.body.appendChild(__overlayEl);
-    __labelDataTh.forEach(function (d) {{
-      var div = document.createElement('div');
-      div.style.cssText = 'position:absolute; transform:translate(-50%,-50%); font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif; font-weight:900; text-align:center; white-space:pre-line; pointer-events:none; text-shadow:-1px -1px 0 #eee,1px -1px 0 #eee,-1px 1px 0 #eee,1px 1px 0 #eee;';
-      div.style.color = 'rgb(' + d.r + ',' + d.g + ',' + d.b + ')';
-      div.textContent = d.label;
-      __overlayEl.appendChild(div);
-    }});
-  }}
-
-  function hsriUpdateOverlayPositions() {{
-    if (!__overlayEl || __overlayEl.style.display === 'none') return;
-    var vp = datamap.deckgl.getViewports()[0];
-    if (!vp) return;
-    var divs = __overlayEl.children;
-
-    // The WebGL TextLayer (English) hides overlapping lower-priority labels via
-    // deck.gl's CollisionFilterExtension; this plain HTML overlay has no such
-    // system, so without this all 12 labels show at once regardless of zoom,
-    // reading as "way too big" even though each one individually isn't. Greedy
-    // largest-first placement with a rough bounding-box overlap check
-    // approximates the same declutter effect.
-    var placed = [];
-    var order = __labelDataTh.map(function (d, i) {{ return i; }}).sort(function (a, b) {{
-      return __labelDataTh[b].size - __labelDataTh[a].size;
-    }});
-
-    order.forEach(function (i) {{
-      var d = __labelDataTh[i];
-      var div = divs[i];
-      var screen = vp.project([d.x, d.y]);
-      var fontSize = Math.max(9, Math.min(15, d.size * 0.5));
-      var lines = d.label.split('\\n');
-      var w = Math.max.apply(null, lines.map(function (l) {{ return l.length; }})) * fontSize * 0.9;
-      var h = lines.length * fontSize * 1.1;
-      var box = {{
-        left: screen[0] - w / 2, right: screen[0] + w / 2,
-        top: screen[1] - h / 2, bottom: screen[1] + h / 2,
-      }};
-      var overlaps = placed.some(function (p) {{
-        return box.left < p.right && box.right > p.left && box.top < p.bottom && box.bottom > p.top;
-      }});
-      if (overlaps) {{
-        div.style.display = 'none';
-        return;
-      }}
-      placed.push(box);
-      div.style.display = 'block';
-      div.style.left = screen[0] + 'px';
-      div.style.top = screen[1] + 'px';
-      div.style.fontSize = fontSize + 'px';
-    }});
-  }}
-
-  window.hsriSwapLabels = function (isTh) {{
-    if (typeof datamap === 'undefined' || !datamap.labelLayer) return;
-    hsriBuildLabelData();
-
-    // English: real (working) WebGL TextLayer, HTML overlay hidden.
-    var enLayer = new deck.TextLayer(Object.assign({{}}, datamap.labelLayer.props, {{data: isTh ? [] : __labelDataEn}}));
-    datamap.labelLayer = enLayer;
-    datamap.layers = datamap.layers.map(function (l) {{ return l.id === 'labelLayer' ? enLayer : l; }});
-    datamap.deckgl.setProps({{layers: datamap.layers.slice()}});
-
-    if (isTh) {{
-      hsriEnsureOverlay();
-      __overlayEl.style.display = 'block';
-      hsriUpdateOverlayPositions();
-      datamap.onViewStateChange('hsriLabelOverlay', hsriUpdateOverlayPositions);
-    }} else if (__overlayEl) {{
-      __overlayEl.style.display = 'none';
-    }}
-  }};
+  // Cluster/group labels on the map stay English-only in both languages (deck.gl's
+  // WebGL TextLayer glyph renderer doesn't apply Thai's combining-mark shaping
+  // correctly regardless of font -- verified empirically -- and the HTML-overlay
+  // workaround for it was reverted per user request). Only the title/subtitle and
+  // the point tooltips are bilingual.
 
   window.hsriApplyLang = function () {{
     var isTh = window.__hsriLang === 'th';
@@ -449,8 +331,6 @@ BILINGUAL_UI_SCRIPT = f"""
     if (root && root.style.display !== 'none' && root.dataset.en) {{
       root.innerHTML = isTh ? root.dataset.th : root.dataset.en;
     }}
-
-    window.hsriSwapLabels(isTh);
   }};
 
   window.hsriToggleLang = function () {{
@@ -460,6 +340,113 @@ BILINGUAL_UI_SCRIPT = f"""
   }};
 
   window.hsriApplyLang();
+
+  // Hover-to-show for mouse users, on top of the existing tap/click-to-show
+  // (kept as-is for touch -- iPad has no real hover, and tap-to-show is what
+  // this session spent the most rounds getting right; see git log). Both
+  // paths call the SAME datamap.deckgl onClick function datamapplot already
+  // compiled from ON_CLICK_JS/build_tooltip_template, so there's only one
+  // render code path to keep correct.
+  //
+  // getTooltip is deck.gl's own picking hook (re-evaluated internally on
+  // every native pointer move) -- not app-level mousemove/mouseout listeners,
+  // which is the machinery that broke pan/zoom three times earlier this
+  // session. Returning null here keeps deck's native .deck-tooltip div (hidden
+  // anyway via TOOLTIP_CSS) out of the picture entirely; #custom-tooltip-root
+  // does all the rendering, same centered/clamped box as the click path.
+  var __hoverIndex = -1;
+  var __hideTimer = null;
+  var __isTouch = false;
+  window.addEventListener('pointerdown', function (e) {{
+    __isTouch = e.pointerType !== 'mouse';
+  }}, {{passive: true}});
+
+  function hsriWireHoverTooltip() {{
+    if (typeof datamap === 'undefined' || !datamap.deckgl) return false;
+    var onClickFn = datamap.deckgl.props.onClick;
+    if (!onClickFn) return false;
+
+    // getTooltip turns out NOT to be pointer-move-driven in this deck.gl
+    // bundle -- confirmed by testing (real hover never invoked it, zero
+    // calls even landing exactly on a point's projected pixel) and by
+    // datamapplot's own dynamic_tooltip.js, which explicitly sets
+    // `getTooltip: null` and wires `onHover` instead for its own live
+    // hover feature. onHover is the real one: same one-shot-per-pick-change
+    // callback shape as onClick, just re-evaluated on pointer move.
+    function hsriScheduleHide() {{
+      if (__hideTimer) clearTimeout(__hideTimer);
+      __hideTimer = setTimeout(function () {{
+        var root = document.getElementById('custom-tooltip-root');
+        if (root) root.style.display = 'none';
+        __hoverIndex = -1;
+        __hideTimer = null;
+      }}, 150);
+    }}
+
+    datamap.deckgl.setProps({{
+      getTooltip: null,
+      onHover: function (info) {{
+        // Touch: hover path fully disabled (not just hide -- the whole thing),
+        // so a tap is handled ONLY by onClick, unchanged from before. Gating
+        // it here, before touching __hoverIndex at all, keeps the two paths'
+        // state fully separate -- a hide skipped for touch must never get
+        // "recorded" as done, or a later real mouse hide can end up deduped
+        // against it and silently no-op (found via testing: a stray touch
+        // mid-session could otherwise wedge mouse hover-out forever).
+        if (__isTouch) return;
+
+        var picked = info && info.picked;
+        var index = picked ? info.index : -1;
+        if (index === __hoverIndex) return;
+        __hoverIndex = index;
+
+        if (picked) {{
+          // A pending hide (from having *just* wobbled off a point) is
+          // cancelled by any new pick -- see the hide branch below for why.
+          if (__hideTimer) {{ clearTimeout(__hideTimer); __hideTimer = null; }}
+          onClickFn(info);
+        }} else {{
+          // Debounced, not immediate: the tooltip box is centered and can
+          // sit directly under the cursor for any point near mid-screen --
+          // the instant it renders, IT (not the canvas) is the topmost
+          // element under the pointer, so deck sees the canvas's pointerout
+          // and reports picked:false one frame later (confirmed by testing:
+          // elementFromPoint at a shown point's own screen coords resolved
+          // to the tooltip div, not the canvas). Without this delay that
+          // reads as "pops up and instantly disappears" for every point near
+          // center. Any re-pick within the window (see above) cancels it.
+          hsriScheduleHide();
+        }}
+      }},
+    }});
+
+    // The debounce above buys enough time to move the cursor onto the
+    // tooltip itself, but staying there needs its own keep-alive -- the
+    // canvas remains "unpicked" for as long as the tooltip covers it, so
+    // hovering the tooltip's own content (to read/scroll it) must not let
+    // the 150ms elapse. Bound to the tooltip div only, never the canvas, so
+    // this can't touch mjolnir's pan/zoom gesture recognition.
+    var tooltipRoot = document.getElementById('custom-tooltip-root');
+    if (tooltipRoot) {{
+      tooltipRoot.addEventListener('mouseenter', function () {{
+        if (__hideTimer) {{ clearTimeout(__hideTimer); __hideTimer = null; }}
+      }});
+      tooltipRoot.addEventListener('mouseleave', function () {{
+        if (__isTouch) return;
+        hsriScheduleHide();
+      }});
+    }}
+    return true;
+  }}
+
+  if (!hsriWireHoverTooltip()) {{
+    // datamap/deckgl not ready yet on first paint; retry shortly.
+    var __hoverWireTries = 0;
+    var __hoverWireTimer = setInterval(function () {{
+      __hoverWireTries++;
+      if (hsriWireHoverTooltip() || __hoverWireTries > 40) clearInterval(__hoverWireTimer);
+    }}, 250);
+  }}
 }})();
 </script>
 """
