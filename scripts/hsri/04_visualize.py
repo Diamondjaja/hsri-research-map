@@ -74,6 +74,10 @@ TOOLTIP_TEMPLATE = """
     display: flex;
     align-items: stretch;
     pointer-events: auto;
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
 ">
     <div style="
         width: 58%;
