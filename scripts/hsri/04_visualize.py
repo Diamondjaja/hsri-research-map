@@ -36,28 +36,6 @@ def format_tags_as_html(tags, color):
     return f'<div style="display:flex;flex-wrap:wrap;gap:5px;">{items}</div>'
 
 
-def format_yn_dims(row):
-    dims = []
-    for key, label in [
-        ("policy_dimension_yn", "Policy"),
-        ("academic_dimension_yn", "Academic"),
-        ("social_dimension_yn", "Social"),
-        ("economic_dimension_yn", "Economic"),
-    ]:
-        if str(row.get(key, "")).strip().lower() == "yes":
-            dims.append(label)
-    return ", ".join(dims) if dims else "Not reported"
-
-
-def format_budget(v):
-    if pd.isna(v):
-        return "Not reported"
-    try:
-        return f"{float(v):,.0f} THB"
-    except (TypeError, ValueError):
-        return "Not reported"
-
-
 TOOLTIP_CSS = """
     max-width: none !important;
     width: auto !important;
@@ -94,7 +72,7 @@ TOOLTIP_TEMPLATE = """
         </h2>
 
         <div style="font-size: 11px; color: #64748b; font-weight: 600; margin-bottom: 6px;">
-            PI: {pi_name} | Year: {year} | Budget: {budget_fmt}
+            Year: {year}
         </div>
 
         <div style="display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 6px;">
@@ -143,14 +121,9 @@ TOOLTIP_TEMPLATE = """
             {techniques_html}
         </div>
 
-        <div style="margin-bottom: 16px;">
+        <div>
             <div style="font-size: 12px; font-weight: 700; color: #d6ac4b; margin-bottom: 5px;">Key Concepts</div>
             {concepts_html}
-        </div>
-
-        <div>
-            <div style="font-size: 12px; font-weight: 700; color: #2a5982; margin-bottom: 5px;">Impact Dimensions</div>
-            <p style="margin: 0; font-size: 12.5px; line-height: 1.45; color: #0f172a;">{impact_dims}</p>
         </div>
     </div>
 </div>
@@ -232,14 +205,14 @@ def main():
 
     df["techniques_html"] = df["techniques_tools"].apply(lambda x: format_tags_as_html(x, "#2a5982"))
     df["concepts_html"] = df["key_concepts"].apply(lambda x: format_tags_as_html(x, "#d6ac4b"))
-    df["impact_dims"] = df.apply(format_yn_dims, axis=1)
-    df["budget_fmt"] = df["approved_budget_thb"].apply(format_budget)
     df["hover_title"] = df["title_en"].fillna(df["project_title_th"]).fillna("Untitled project")
 
+    # Tooltip is scoped to project details + findings only -- no PI name, budget, or
+    # grant-reporting fields (policy/academic/social/economic impact dimensions).
     tooltip_columns = [
-        "pi_name", "year", "budget_fmt", "domain", "data_type",
+        "year", "domain", "data_type",
         "summary_short", "summary_simple", "main_findings", "methodology",
-        "techniques_html", "concepts_html", "impact_dims",
+        "techniques_html", "concepts_html",
     ]
 
     print("Creating interactive research map...")
