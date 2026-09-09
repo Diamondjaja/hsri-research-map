@@ -205,3 +205,8 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+# HSRI pipeline intermediate artifacts (regenerable; kept local, not versioned)
+data/hsri/
+processed_data/
+hsri_research_map.html
