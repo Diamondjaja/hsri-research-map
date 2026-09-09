@@ -157,33 +157,43 @@ TOOLTIP_TEMPLATE = """
 """
 
 
-def pin_cdn_urls(filename):
-    """datamapplot hardcodes unpkg.com CDN script tags, some with an unpinned
-    '@latest' version. unpkg is blocked by some sandboxed HTML viewers (silent hang,
-    page loads forever waiting for globals that never arrive) and '@latest' is a
-    reproducibility risk. Repoint to jsdelivr with pinned versions."""
+VENDOR_DIR = ROOT / "scripts" / "hsri" / "vendor"
+
+
+def inline_vendor_scripts(filename):
+    """datamapplot hardcodes unpkg.com <script src> tags (one with an unpinned
+    '@latest' version). Repointing to another CDN (jsdelivr) still hangs in some
+    sandboxed HTML viewers that block ALL external script loading, not just
+    unpkg specifically -- the page waits forever for globals that never arrive.
+    Make the file fully self-contained instead: inline deck.gl/apache-arrow/d3
+    directly as <script> content, sourced from scripts/hsri/vendor/ (populate
+    that dir first, e.g. via curl from jsdelivr -- see task.md)."""
     with open(filename, "r", encoding="utf-8") as f:
         content = f.read()
 
     replacements = [
-        ("https://unpkg.com/deck.gl@9.1/dist.min.js",
-         "https://cdn.jsdelivr.net/npm/deck.gl@9.1/dist.min.js"),
-        ("https://unpkg.com/apache-arrow@latest/Arrow.es2015.min.js",
-         "https://cdn.jsdelivr.net/npm/apache-arrow@21.2.0/Arrow.es2015.min.js"),
-        ("https://unpkg.com/d3@latest/dist/d3.min.js",
-         "https://cdn.jsdelivr.net/npm/d3@7/dist/d3.min.js"),
+        ("https://unpkg.com/deck.gl@9.1/dist.min.js", "deck.gl.min.js"),
+        ("https://unpkg.com/apache-arrow@latest/Arrow.es2015.min.js", "Arrow.es2015.min.js"),
+        ("https://unpkg.com/d3@latest/dist/d3.min.js", "d3.min.js"),
     ]
     changes = 0
-    for old, new in replacements:
-        if old in content:
-            content = content.replace(old, new)
-            changes += 1
-        else:
-            print(f"  ! CDN pattern not found (datamapplot version may have changed): {old}")
+    for url, vendor_filename in replacements:
+        vendor_path = VENDOR_DIR / vendor_filename
+        tag = f'<script src="{url}">'
+        if tag not in content:
+            print(f"  ! script tag not found (datamapplot version may have changed): {url}")
+            continue
+        if not vendor_path.exists():
+            print(f"  ! vendor file missing, leaving as CDN reference: {vendor_path}")
+            continue
+        js = vendor_path.read_text(encoding="utf-8")
+        assert "</script" not in js, f"{vendor_filename} contains a literal </script — would break inlining"
+        content = content.replace(tag, f"<script>\n{js}\n")
+        changes += 1
 
     with open(filename, "w", encoding="utf-8") as f:
         f.write(content)
-    print(f"Pinned {changes}/{len(replacements)} CDN URLs to jsdelivr")
+    print(f"Inlined {changes}/{len(replacements)} vendor scripts (fully self-contained, no CDN)")
 
 
 def optimize_for_touch_devices(filename):
@@ -262,7 +272,7 @@ def main():
     interactive_plot.save(str(OUT_FILE))
     print(f"Saved {OUT_FILE}")
 
-    pin_cdn_urls(str(OUT_FILE))
+    inline_vendor_scripts(str(OUT_FILE))
     optimize_for_touch_devices(str(OUT_FILE))
 
 
