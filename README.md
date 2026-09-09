@@ -8,8 +8,6 @@ covering fiscal years 2022–2025.
 
 <img src="assets/map_screenshot.png" alt="HSRI Research Grant Map" width="800">
 
-<img src="assets/hsri_research_map_demo.gif" alt="HSRI Research Grant Map demo" width="800">
-
 ### Overview
 
 This project visualizes the structure of 318 HSRI-funded health systems research projects,
