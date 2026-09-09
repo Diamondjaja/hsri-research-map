@@ -51,16 +51,21 @@ def format_yn_dims(row):
 
 
 TOOLTIP_CSS = """
-    max-width: none !important;
-    width: auto !important;
-    background: transparent !important;
-    box-shadow: none !important;
-    padding: 0 !important;
-    border: none !important;
-    pointer-events: none;
+    display: none !important;
 """
+# deck.gl's native hover-driven tooltip (this .deck-tooltip class) is permanently
+# hidden. It's wired to getTooltip, which gets re-evaluated on every native
+# mousemove/mouseout the browser fires -- including the synthetic ones iOS
+# generates around a touch tap, which raced with any tap-triggered show and either
+# hid it immediately or, once that race was patched, broke pan/zoom and tap
+# recognition entirely (each attempt documented in git log). Rather than continue
+# patching around that fragile hover machinery, the tooltip is now driven entirely
+# by CUSTOM_TOOLTIP_TEMPLATE + ON_CLICK_JS below, via deck.gl's native onClick prop
+# -- a one-shot callback, never re-evaluated by hover state, so there's nothing for
+# stray touch-emulation events to race with. Explicit close button instead of
+# double-tap, for the same reliability reason.
 
-TOOLTIP_TEMPLATE = """
+CUSTOM_TOOLTIP_TEMPLATE = """
 <div style="
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
     width: min(750px, 92vw);
@@ -78,7 +83,23 @@ TOOLTIP_TEMPLATE = """
     top: 50%;
     left: 50%;
     transform: translate(-50%, -50%);
+    z-index: 10000;
 ">
+    <button onclick="document.getElementById('custom-tooltip-root').style.display='none'" style="
+        position: absolute;
+        top: 8px;
+        right: 8px;
+        width: 28px;
+        height: 28px;
+        border-radius: 50%;
+        border: none;
+        background: #f1f5f9;
+        color: #475569;
+        font-size: 16px;
+        line-height: 1;
+        cursor: pointer;
+        z-index: 1;
+    ">&times;</button>
     <div style="
         width: 58%;
         flex-shrink: 0;
@@ -153,6 +174,16 @@ TOOLTIP_TEMPLATE = """
 </div>
 """
 
+# Wrapped in backticks (a JS template literal) exactly like datamapplot's own
+# hover_text_html_template mechanism does internally -- proven to survive
+# whatever escaping happens downstream, since that's the same structure the
+# working hover-based template used before this redesign.
+ON_CLICK_JS = (
+    "document.getElementById('custom-tooltip-root').innerHTML = `"
+    + CUSTOM_TOOLTIP_TEMPLATE
+    + "`;\ndocument.getElementById('custom-tooltip-root').style.display = 'block';"
+)
+
 
 VENDOR_DIR = ROOT / "scripts" / "hsri" / "vendor"
 
@@ -193,79 +224,25 @@ def inline_vendor_scripts(filename):
     print(f"Inlined {changes}/{len(replacements)} vendor scripts (fully self-contained, no CDN)")
 
 
-def optimize_for_touch_devices(filename):
-    """Make the map usable on touch devices (iPad etc.): they don't fire mousemove /
-    mouseleave, which the hover tooltip depends on, so remap tap -> hover-show and
-    double-tap -> hover-hide. Ported as-is from the original notebook."""
-    with open(filename, "r", encoding="utf-8") as f:
-        content = f.read()
-
-    modifications = [
-        (".on('click',e=>this.#handleClick(e))", ".on('disabled_click',e=>this.#handleClick(e))"),
-        (".on('mousemove',e=>this.#handleMouseMove(e))", ".on('click',e=>this.#handleMouseMove(e))"),
-        (".on('mouseleave',e=>this.#handleMouseLeave(e))", ".on('dblclick',e=>this.#handleMouseLeave(e))"),
-    ]
-
-    changes = 0
-    for search, replace in modifications:
-        if search in content:
-            content = content.replace(search, replace)
-            changes += 1
-        else:
-            print(f"  ! touch-optimization pattern not found: {search[:40]}...")
-
-    if changes:
-        with open(filename, "w", encoding="utf-8") as f:
-            f.write(content)
-        print(f"Applied {changes}/{len(modifications)} touch optimizations")
-
-
-TOUCH_RACE_GUARD_SCRIPT = """
-<script>
-// The touch-optimization patch above remaps our app's own click/mousemove/mouseleave
-// bindings for tap-to-show / double-tap-to-hide. But deck.gl's own internal event
-// manager (mjolnir.js) ALSO natively listens for real mousemove/mouseout on the canvas,
-// independent of our app-level bindings, to drive its built-in hover/tooltip picking.
-// iOS synthesizes mousemove/mouseout events around a touch tap for compatibility, and
-// those reach deck.gl's native handler and immediately re-hide the tooltip our tap just
-// showed ("click and disappeared"). Suppress ONLY those two synthetic MOUSE event types
-// during the tap window -- real touch panning/zooming is driven by touch/pointer events,
-// never by mouse events, so this doesn't affect it. (An earlier version of this guard
-// also suppressed pointermove/pointerout, which broke drag-to-pan and deck.gl's own
-// tap-vs-drag gesture recognition entirely -- narrowed to just the two mouse events that
-// are actually involved in the race.) 'click' and 'dblclick' (which our own show/hide
-// logic depends on) are untouched either way.
-(function () {
-  function armGuard() {
-    var canvas = document.querySelector('#deck-container canvas');
-    if (!canvas) { setTimeout(armGuard, 200); return; }
-    var suppressUntil = 0;
-    var GUARD_MS = 600;
-    var arm = function () { suppressUntil = performance.now() + GUARD_MS; };
-    canvas.addEventListener('pointerdown', arm, true);
-    canvas.addEventListener('touchstart', arm, true);
-    ['mousemove', 'mouseout'].forEach(function (type) {
-      canvas.addEventListener(type, function (e) {
-        if (performance.now() < suppressUntil) { e.stopImmediatePropagation(); }
-      }, true);
-    });
-  }
-  armGuard();
-})();
-</script>
+CUSTOM_TOOLTIP_ROOT_SCRIPT = """
+<div id="custom-tooltip-root" style="display:none;"></div>
 """
 
 
-def guard_touch_tooltip_race(filename):
+def inject_custom_tooltip_root(filename):
+    """Empty container that ON_CLICK_JS populates and shows. See the note above
+    CUSTOM_TOOLTIP_TEMPLATE for why this replaces the old hover/touch-remap approach
+    entirely (three iterations of patching deck.gl's native hover machinery each
+    surfaced a new failure mode -- see git log)."""
     with open(filename, "r", encoding="utf-8") as f:
         content = f.read()
     if "</body>" not in content:
-        print("  ! </body> not found, could not inject touch-race guard script")
+        print("  ! </body> not found, could not inject custom tooltip root")
         return
-    content = content.replace("</body>", TOUCH_RACE_GUARD_SCRIPT + "</body>")
+    content = content.replace("</body>", CUSTOM_TOOLTIP_ROOT_SCRIPT + "</body>")
     with open(filename, "w", encoding="utf-8") as f:
         f.write(content)
-    print("Injected touch-tooltip-race guard script")
+    print("Injected custom tooltip root container")
 
 
 def main():
@@ -310,8 +287,8 @@ def main():
         sub_title="HSRI RG4 Grant Close-out Reports (2022–2025)",
         enable_search=True,
         extra_point_data=df[tooltip_columns].fillna(""),
-        hover_text_html_template=TOOLTIP_TEMPLATE,
-        tooltip_css=TOOLTIP_CSS,
+        tooltip_css=TOOLTIP_CSS,  # permanently hides the native hover tooltip
+        on_click=ON_CLICK_JS,
         histogram_data=pd.to_datetime(df["year"].astype("Int64").astype(str), format="%Y", errors="coerce"),
         histogram_group_datetime_by="year",
     )
@@ -320,8 +297,7 @@ def main():
     print(f"Saved {OUT_FILE}")
 
     inline_vendor_scripts(str(OUT_FILE))
-    optimize_for_touch_devices(str(OUT_FILE))
-    guard_touch_tooltip_race(str(OUT_FILE))
+    inject_custom_tooltip_root(str(OUT_FILE))
 
 
 if __name__ == "__main__":
